@@ -1,6 +1,7 @@
 {
   "name": "lujihong/elasticsearch",
   "description": "hyperf elasticsearch client",
+  "license": "MIT",
   "keywords": [
     "elasticsearch",
     "ES",
