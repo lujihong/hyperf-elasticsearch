@@ -20,7 +20,7 @@ php ./bin/hyperf.php vendor:publish lujihong/elasticsearch
 <?php
 declare(strict_types=1);
 
-namespace App\Wechat\EsModel;
+namespace App\EsModel;
 
 use Hyperf\Elasticsearch\Model\Model;
 use Hyperf\Elasticsearch\Model\MySqlType;
@@ -64,9 +64,9 @@ class TestModel extends Model
 <?php
 declare(strict_types=1);
 
-namespace App\Wechat\Command;
+namespace App\Command;
 
-use App\Wechat\EsModel\TestModel;
+use App\EsModel\TestModel;
 use Hyperf\Command\Command as HyperfCommand;
 use Hyperf\Command\Annotation\Command;
 
@@ -201,6 +201,8 @@ class TestCommand extends HyperfCommand
             ->page(1, 100)->toArray(); //分页查询
 //            ->find(5)?->toArray(); //按id查找一条数据
         echo '数据查询:' . print_r($result, true) . PHP_EOL;
+        
+        //更多用法请查看源码
     }
 }
 ```
