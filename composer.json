@@ -1,0 +1,51 @@
+{
+  "name": "lujihong/elasticsearch",
+  "description": "hyperf elasticsearch client",
+  "keywords": [
+    "elasticsearch",
+    "ES",
+    "hyperf",
+    "hyperf elasticsearch"
+  ],
+  "authors": [
+    {
+      "name": "lujihong",
+      "email": "382217590@qq.com",
+      "homepage": "https://github.com/lujihong",
+      "role": "Developer"
+    }
+  ],
+  "require": {
+    "php": ">=8.0",
+    "hyperf/framework": "*",
+    "hyperf/utils": "*",
+    "hyperf/cache": "*",
+    "hyperf/paginator": "*",
+    "elasticsearch/elasticsearch": "^8.5.2"
+  },
+  "require-dev": {
+    "roave/security-advisories": "dev-latest"
+  },
+  "autoload": {
+    "psr-4": {
+      "Hyperf\\Elasticsearch\\": "src/"
+    }
+  },
+  "extra": {
+    "hyperf": {
+      "config": "Hyperf\\Elasticsearch\\ConfigProvider"
+    },
+    "branch-alias": {
+      "dev-master": "1.0.x-dev"
+    }
+  },
+  "config": {
+    "optimize-autoloader": true,
+    "sort-packages": true
+  },
+  "scripts": {
+    "test": "phpunit -c phpunit.xml --colors=always",
+    "analyse": "phpstan analyse --memory-limit 1024M -l 0 ./src",
+    "cs-fix": "php-cs-fixer fix src && php-cs-fixer fix tests"
+  }
+}
