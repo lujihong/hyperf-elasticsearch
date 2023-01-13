@@ -59,12 +59,12 @@ class Builder
      * @param int $size
      * @param array $fields
      * @param bool $deep 深度分页 searchAfter 方式，page为1会返回第一页
-     * @return LengthAwarePaginator|false
+     * @return LengthAwarePaginator
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      * @throws \Psr\SimpleCache\InvalidArgumentException
      */
-    public function page(int $page = 1, int $size = 50, array $fields = ['*'], bool $deep = false): LengthAwarePaginator|false
+    public function page(int $page = 1, int $size = 50, array $fields = ['*'], bool $deep = false): LengthAwarePaginator
     {
         $from = 0;
 
@@ -123,10 +123,9 @@ class Builder
         try {
             $result = $this->run('search', $this->sql);
         } catch (ClientResponseException $e) {
-            if ($e->getCode() === 404) {
-                return false;
+            if ($e->getCode() !== 404) {
+                throw new LogicException($e->getMessage(), $e->getCode());
             }
-            throw new LogicException($e->getMessage(), $e->getCode());
         }
         $original = $result['hits']['hits'] ?? [];
         $total = $result['hits']['total']['value'] ?? 0;
@@ -168,11 +167,11 @@ class Builder
     /**
      * @param array $fields
      * @param int $size
-     * @return Collection|false
+     * @return Collection|null
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    public function get(array $fields = ['*'], int $size = 50): Collection|false
+    public function get(array $fields = ['*'], int $size = 50): Collection|null
     {
         if (empty($this->query)) {
             $this->sql = [
@@ -213,7 +212,7 @@ class Builder
             $result = $this->run('search', $this->sql);
         } catch (ClientResponseException $e) {
             if ($e->getCode() === 404) {
-                return false;
+                return null;
             }
             throw new LogicException($e->getMessage(), $e->getCode());
         }
@@ -247,19 +246,19 @@ class Builder
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    public function first(array $fields = ['*']): ?Model
+    public function first(array $fields = ['*']): Model|null
     {
-        return $this->take(1)->get($fields)->first();
+        return $this->take(1)->get($fields)?->first();
     }
 
     /**
      * 查找单条文档
      * @param string|int $id
-     * @return false|Model
+     * @return Model|null
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    public function find(string|int $id): bool|Model
+    public function find(string|int $id): Model|null
     {
         $this->sql = [
             'index' => $this->model->getIndex(),
@@ -269,7 +268,7 @@ class Builder
             $result = $this->run('get', $this->sql);
         } catch (ClientResponseException $e) {
             if ($e->getCode() === 404) {
-                return false;
+                return null;
             }
             throw new LogicException($e->getMessage(), $e->getCode());
         }
@@ -282,7 +281,6 @@ class Builder
         $this->model->setOriginal($result);
         return $this->model;
     }
-
 
     /**
      * 匹配项数
@@ -310,7 +308,13 @@ class Builder
             ];
         }
         $this->sql['body'] = array_filter($this->sql['body']);
-        $result = $this->run('count', $this->sql);
+        try {
+            $result = $this->run('count', $this->sql);
+        } catch (ClientResponseException $e) {
+            if ($e->getCode() !== 404) {
+                throw new LogicException($e->getMessage(), $e->getCode());
+            }
+        }
         return (int)($result['count'] ?? 0);
     }
 
@@ -366,7 +370,13 @@ class Builder
         ];
 
         $this->sql['body'] = array_filter($this->sql['body']);
-        $result = $this->run('count', $this->sql);
+        try {
+            $result = $this->run('count', $this->sql);
+        } catch (ClientResponseException $e) {
+            if ($e->getCode() !== 404) {
+                throw new LogicException($e->getMessage(), $e->getCode());
+            }
+        }
         return (bool)($result['count'] ?? 0);
     }
 
@@ -428,9 +438,10 @@ class Builder
         try {
             $result = $this->updateByQueryScript($script, $params);
         } catch (ClientResponseException $e) {
-            throw new LogicException($e->getMessage(), $e->getCode());
+            if ($e->getCode() !== 404) {
+                throw new LogicException($e->getMessage(), $e->getCode());
+            }
         }
-
         return isset($result['updated']) && $result['updated'] > 0;
     }
 
@@ -551,12 +562,17 @@ class Builder
         } catch (ClientResponseException $e) {
             // manage the 4xx error
             $this->logger->error('Elasticsearch create operation, client response exception, ' . $e->getMessage() . ', index:' . $this->model->getIndex());
+            if ($e->getCode() !== 404) {
+                throw new LogicException($e->getMessage(), $e->getCode());
+            }
         } catch (ServerResponseException $e) {
             // manage the 5xx error
             $this->logger->error('Elasticsearch create operation, server response exception, ' . $e->getMessage() . ', index:' . $this->model->getIndex());
+            throw new LogicException($e->getMessage(), $e->getCode());
         } catch (\Exception $e) {
             // eg. network error like NoNodeAvailableException
             $this->logger->error('Elasticsearch create operation exception, ' . $e->getMessage() . ', index:' . $this->model->getIndex());
+            throw new LogicException($e->getMessage(), $e->getCode());
         }
         return $this->model;
     }
