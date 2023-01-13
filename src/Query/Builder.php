@@ -59,12 +59,12 @@ class Builder
      * @param int $size
      * @param array $fields
      * @param bool $deep 深度分页 searchAfter 方式，page为1会返回第一页
-     * @return LengthAwarePaginator
+     * @return LengthAwarePaginator|false
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      * @throws \Psr\SimpleCache\InvalidArgumentException
      */
-    public function page(int $page = 1, int $size = 50, array $fields = ['*'], bool $deep = false): LengthAwarePaginator
+    public function page(int $page = 1, int $size = 50, array $fields = ['*'], bool $deep = false): LengthAwarePaginator|false
     {
         $from = 0;
 
@@ -119,7 +119,15 @@ class Builder
         }
 
         $this->sql['body'] = array_filter($this->sql['body']);
-        $result = $this->run('search', $this->sql);
+
+        try {
+            $result = $this->run('search', $this->sql);
+        } catch (ClientResponseException $e) {
+            if ($e->getCode() === 404) {
+                return false;
+            }
+            throw new LogicException($e->getMessage(), $e->getCode());
+        }
         $original = $result['hits']['hits'] ?? [];
         $total = $result['hits']['total']['value'] ?? 0;
 
@@ -160,11 +168,11 @@ class Builder
     /**
      * @param array $fields
      * @param int $size
-     * @return Collection
+     * @return Collection|false
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    public function get(array $fields = ['*'], int $size = 50): Collection
+    public function get(array $fields = ['*'], int $size = 50): Collection|false
     {
         if (empty($this->query)) {
             $this->sql = [
@@ -201,7 +209,14 @@ class Builder
         }
 
         $this->sql['body'] = array_filter($this->sql['body']);
-        $result = $this->run('search', $this->sql);
+        try {
+            $result = $this->run('search', $this->sql);
+        } catch (ClientResponseException $e) {
+            if ($e->getCode() === 404) {
+                return false;
+            }
+            throw new LogicException($e->getMessage(), $e->getCode());
+        }
         $original = $result['hits']['hits'] ?? [];
         return Collection::make($original)->map(function ($value) use ($fields) {
             $attributes = $value['_source'] ?? [];
@@ -240,17 +255,24 @@ class Builder
     /**
      * 查找单条文档
      * @param string|int $id
-     * @return Model
+     * @return false|Model
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    public function find(string|int $id): Model
+    public function find(string|int $id): bool|Model
     {
         $this->sql = [
             'index' => $this->model->getIndex(),
             'id' => $id
         ];
-        $result = $this->run('get', $this->sql);
+        try {
+            $result = $this->run('get', $this->sql);
+        } catch (ClientResponseException $e) {
+            if ($e->getCode() === 404) {
+                return false;
+            }
+            throw new LogicException($e->getMessage(), $e->getCode());
+        }
         $attributes = $result['_source'] ?? [];
         $id = $result['_id'] ?? 0;
         if ($attributes && $id) {
@@ -260,6 +282,7 @@ class Builder
         $this->model->setOriginal($result);
         return $this->model;
     }
+
 
     /**
      * 匹配项数
@@ -324,6 +347,30 @@ class Builder
     }
 
     /**
+     * 根据查询条件检查是否存在数据
+     * @return bool
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
+    public function exists(): bool
+    {
+        if (empty($this->query)) {
+            throw new LogicException('Missing query criteria.');
+        }
+
+        $this->sql = [
+            'index' => $this->model->getIndex(),
+            'body' => [
+                'query' => $this->query
+            ]
+        ];
+
+        $this->sql['body'] = array_filter($this->sql['body']);
+        $result = $this->run('count', $this->sql);
+        return (bool)($result['count'] ?? 0);
+    }
+
+    /**
      * 按查询条件删除文档
      * @return bool
      * @throws ContainerExceptionInterface
@@ -337,19 +384,20 @@ class Builder
 
         $this->sql = [
             'index' => $this->model->getIndex(),
+            'conflicts' => 'proceed', //如果按查询删除命中版本冲突，默认值为abort
+            'refresh' => true, //Elasticsearch 会刷新 请求完成后通过查询删除
+            'slices' => 5, //此任务应划分为的切片数。 默认值为 1，表示任务未切片为子任务
             'body' => [
                 'query' => $this->query
             ]
         ];
-
         try {
             $result = $this->run('deleteByQuery', $this->sql);
-        } catch (ClientResponseException $e) {
+        } catch (ClientResponseException|\Elastic\Elasticsearch\Exception\ClientResponseException $e) {
             if ($e->getCode() !== 404 && !Str::contains($e->getMessage(), 'but no document was found')) {
                 throw new LogicException($e->getMessage(), $e->getCode());
             }
         }
-
         return isset($result['deleted']) && $result['deleted'] > 0;
     }
 
