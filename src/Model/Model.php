@@ -38,7 +38,17 @@ abstract class Model implements Arrayable, Jsonable, JsonSerializable
      */
     public function newQuery(): Builder
     {
-        return $this->newModelBuilder()->setModel($this);
+        $self = $this->newModelBuilder()->setModel($this);
+
+        try {
+            //检查索引是否存在，不存在则创建
+            if (!$self->existsIndex()) {
+                $self->createIndex();
+            }
+        } catch (\Exception $e) {
+        }
+
+        return $self;
     }
 
     /**

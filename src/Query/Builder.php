@@ -49,11 +49,6 @@ class Builder
         $this->config = $this->container->get(ConfigInterface::class);
         $this->cache = $this->container->get(CacheInterface::class);
         $this->logger = $this->container->get(LoggerFactory::class)->get('elasticsearch', 'default');
-
-        //检查索引是否存在，不存在则创建
-        if (!$this->existsIndex()) {
-            $this->createIndex();
-        }
     }
 
     /**
