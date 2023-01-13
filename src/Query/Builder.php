@@ -96,7 +96,9 @@ class Builder
                     'query' => [
                         'match_all' => new \stdClass()
                     ],
-                    'search_after' => $this->searchAfter
+                    'search_after' => $this->searchAfter,
+                    'highlight' => $this->highlight,
+                    'sort' => $this->sort
                 ]
             ];
         } else {
@@ -186,7 +188,9 @@ class Builder
                     ],
                     'query' => [
                         'match_all' => new \stdClass()
-                    ]
+                    ],
+                    'highlight' => $this->highlight,
+                    'sort' => $this->sort
                 ]
             ];
         } else {
