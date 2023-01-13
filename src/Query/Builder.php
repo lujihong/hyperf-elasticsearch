@@ -38,11 +38,9 @@ class Builder
     protected Model $model;
     protected int $take = 0;
     protected array $operate = [
-        '=', '>', '<', '>=', '<=', '!=', '<>', 'in', 'not_in',
-        'between', 'not_between', 'should_match_phrase', 'not_match_phrase',
-        'match_phrase', 'match', 'should_match', 'not_match', 'multi_match',
-        'term', 'not_term', 'regex', 'prefix', 'not_prefix', 'wildcard',
-        'not_exists', 'exists'
+        '=', '>', '<', '>=', '<=', '!=', 'in',
+        'between', 'match_phrase', 'match', 'multi_match',
+        'term', 'regexp', 'prefix', 'wildcard', 'exists'
     ];
 
     public function __construct()
@@ -51,6 +49,11 @@ class Builder
         $this->config = $this->container->get(ConfigInterface::class);
         $this->cache = $this->container->get(CacheInterface::class);
         $this->logger = $this->container->get(LoggerFactory::class)->get('elasticsearch', 'default');
+
+        //检查索引是否存在，不存在则创建
+        if (!$this->existsIndex()) {
+            $this->createIndex();
+        }
     }
 
     /**
@@ -768,38 +771,61 @@ class Builder
             $value = $operate;
             $operate = '=';
         }
-        if (in_array($operate, $this->operate, true)) {
+        $operates = ['=', '>', '<', '>=', '<=', '!='];
+        if (in_array($operate, $operates, true)) {
             $this->parseQuery($field, $operate, $value);
         } else {
-            $this->logger->error('where query condition operate [' . $operate . '] illegally, Supported only [' . implode(',', $this->operate) . ']');
+            throw new LogicException('where query condition operate [' . $operate . '] illegally, Supported only [' . implode(',', $operates) . ']');
         }
         return $this;
     }
 
     /**
-     * 字段存在索引
+     * must字段存在索引
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-exists-query.html#exists-query-top-level-params
      * @param string $field
      * @return $this
      */
     public function whereExistsField(string $field): Builder
     {
-        return $this->where($field, 'exists', '');
+        return $this->parseQuery($field, 'exists', '', type: 'must');
     }
 
     /**
-     * 字段不存在索引
+     * must_not字段不存在索引
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-exists-query.html#exists-query-top-level-params
      * @param string $field
      * @return $this
      */
     public function whereNotExistsField(string $field): Builder
     {
-        return $this->where($field, 'not_exists', '');
+        return $this->parseQuery($field, 'exists', '', type: 'must_not');
     }
 
     /**
-     * 多个确切的条件满足
+     * should字段不存在索引
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-exists-query.html#exists-query-top-level-params
+     * @param string $field
+     * @return $this
+     */
+    public function whereShouldExistsField(string $field): Builder
+    {
+        return $this->parseQuery($field, 'exists', '', type: 'should');
+    }
+
+    /**
+     * filter字段不存在索引
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-exists-query.html#exists-query-top-level-params
+     * @param string $field
+     * @return $this
+     */
+    public function whereFilterExistsField(string $field): Builder
+    {
+        return $this->parseQuery($field, 'exists', '', type: 'filter');
+    }
+
+    /**
+     * must多个确切的条件满足
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-terms-query.html
      * @param string $field
      * @param array $value
@@ -807,11 +833,11 @@ class Builder
      */
     public function whereIn(string $field, array $value): Builder
     {
-        return $this->where($field, 'in', $value);
+        return $this->parseQuery($field, 'in', $value, type: 'must');
     }
 
     /**
-     * 其中不能有多个确切的条件满足
+     * must_not不能有多个确切的条件满足
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-terms-query.html
      * @param string $field
      * @param array $value
@@ -819,37 +845,79 @@ class Builder
      */
     public function whereNotIn(string $field, array $value): Builder
     {
-        return $this->where($field, 'not_in', $value);
+        return $this->parseQuery($field, 'in', $value, type: 'must_not');
     }
 
     /**
-     * 不得与短语匹配
-     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query-phrase.html
+     * should过滤多个确切的条件满足
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-terms-query.html
      * @param string $field
-     * @param mixed $value
-     * @param int $slop
+     * @param array $value
      * @return $this
      */
-    public function whereNotMatchPhrase(string $field, mixed $value, int $slop = 100): Builder
+    public function whereShouldIn(string $field, array $value): Builder
     {
-        return $this->parseQuery($field, 'not_match_phrase', $value, ['slop' => $slop]);
+        return $this->parseQuery($field, 'in', $value, type: 'should');
     }
 
     /**
-     * 或匹配的短语查询
-     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query-phrase.html
+     * filter过滤多个确切的条件满足
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-terms-query.html
      * @param string $field
-     * @param mixed $value
-     * @param int $slop
+     * @param array $value
      * @return $this
      */
-    public function whereShouldMatchPhrase(string $field, mixed $value, int $slop = 100): Builder
+    public function whereFilterIn(string $field, array $value): Builder
     {
-        return $this->parseQuery($field, 'should_match_phrase', $value, ['slop' => $slop]);
+        return $this->parseQuery($field, 'in', $value, type: 'filter');
     }
 
     /**
-     * 其中必须匹配短语
+     * must正则匹配
+     * @param string $field
+     * @param array $value
+     * @return Builder
+     */
+    public function whereRegexp(string $field, array $value): Builder
+    {
+        return $this->parseQuery($field, 'regexp', $value, type: 'must');
+    }
+
+    /**
+     * must_not正则匹配
+     * @param string $field
+     * @param array $value
+     * @return $this
+     */
+    public function whereNotRegexp(string $field, array $value): Builder
+    {
+        return $this->parseQuery($field, 'regexp', $value, type: 'must_not');
+    }
+
+    /**
+     * should正则匹配
+     * @param string $field
+     * @param array $value
+     * @return $this
+     */
+    public function whereShouldRegexp(string $field, array $value): Builder
+    {
+        return $this->parseQuery($field, 'regexp', $value, type: 'should');
+    }
+
+    /**
+     * filter正则匹配
+     * @param string $field
+     * @param array $value
+     * @return Builder
+     */
+    public function whereFilterRegexp(string $field, array $value): Builder
+    {
+        return $this->parseQuery($field, 'regexp', $value, type: 'filter');
+    }
+
+    /**
+     * must匹配短语
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query-phrase.html
      * @param string $field
      * @param mixed $value
@@ -858,7 +926,46 @@ class Builder
      */
     public function whereMatchPhrase(string $field, mixed $value, int $slop = 100): Builder
     {
-        return $this->parseQuery($field, 'match_phrase', $value, ['slop' => $slop]);
+        return $this->parseQuery($field, 'match_phrase', $value, ['slop' => $slop], 'must');
+    }
+
+    /**
+     * must_not短语匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query-phrase.html
+     * @param string $field
+     * @param mixed $value
+     * @param int $slop
+     * @return $this
+     */
+    public function whereNotMatchPhrase(string $field, mixed $value, int $slop = 100): Builder
+    {
+        return $this->parseQuery($field, 'match_phrase', $value, ['slop' => $slop], 'must_not');
+    }
+
+    /**
+     * should短语匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query-phrase.html
+     * @param string $field
+     * @param mixed $value
+     * @param int $slop
+     * @return $this
+     */
+    public function whereShouldMatchPhrase(string $field, mixed $value, int $slop = 100): Builder
+    {
+        return $this->parseQuery($field, 'match_phrase', $value, ['slop' => $slop], 'should');
+    }
+
+    /**
+     * filter短语匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query-phrase.html
+     * @param string $field
+     * @param mixed $value
+     * @param int $slop
+     * @return $this
+     */
+    public function whereFilterMatchPhrase(string $field, mixed $value, int $slop = 100): Builder
+    {
+        return $this->parseQuery($field, 'match_phrase', $value, ['slop' => $slop], 'filter');
     }
 
     /**
@@ -870,7 +977,7 @@ class Builder
      */
     public function whereBetween(string $field, array $value): Builder
     {
-        return $this->parseQuery($field, 'between', $value);
+        return $this->parseQuery($field, 'between', $value, type: 'must');
     }
 
     /**
@@ -882,11 +989,35 @@ class Builder
      */
     public function whereNotBetween(string $field, array $value): Builder
     {
-        return $this->parseQuery($field, 'not_between', $value);
+        return $this->parseQuery($field, 'between', $value, type: 'must_not');
     }
 
     /**
-     * 查询指定前缀
+     * should范围查询
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-range-query.html
+     * @param string $field
+     * @param array $value
+     * @return $this
+     */
+    public function whereShouldBetween(string $field, array $value): Builder
+    {
+        return $this->parseQuery($field, 'between', $value, type: 'should');
+    }
+
+    /**
+     * filter范围查询
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-range-query.html
+     * @param string $field
+     * @param array $value
+     * @return $this
+     */
+    public function whereFilterBetween(string $field, array $value): Builder
+    {
+        return $this->parseQuery($field, 'between', $value, type: 'filter');
+    }
+
+    /**
+     * must查询指定前缀
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-prefix-query.html
      * @param string $field
      * @param mixed $value
@@ -894,11 +1025,11 @@ class Builder
      */
     public function wherePrefix(string $field, mixed $value): Builder
     {
-        return $this->parseQuery($field, 'prefix', $value);
+        return $this->parseQuery($field, 'prefix', $value, type: 'must');
     }
 
     /**
-     * 不能是指定前缀
+     * must_not不能是指定前缀
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-prefix-query.html
      * @param string $field
      * @param mixed $value
@@ -906,11 +1037,35 @@ class Builder
      */
     public function whereNotPrefix(string $field, mixed $value): Builder
     {
-        return $this->parseQuery($field, 'not_prefix', $value);
+        return $this->parseQuery($field, 'prefix', $value, type: 'must_not');
     }
 
     /**
-     * 通配符*号匹配
+     * should应该包含指定前缀
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-prefix-query.html
+     * @param string $field
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereShouldPrefix(string $field, mixed $value): Builder
+    {
+        return $this->parseQuery($field, 'prefix', $value, type: 'should');
+    }
+
+    /**
+     * filter过滤包含指定前缀
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-prefix-query.html
+     * @param string $field
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereFilterPrefix(string $field, mixed $value): Builder
+    {
+        return $this->parseQuery($field, 'prefix', $value, type: 'filter');
+    }
+
+    /**
+     * must通配符*号匹配
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-wildcard-query.html
      * @param string $field
      * @param string $value
@@ -918,11 +1073,47 @@ class Builder
      */
     public function whereWildcard(string $field, string $value): Builder
     {
-        return $this->parseQuery($field, 'wildcard', $value);
+        return $this->parseQuery($field, 'wildcard', $value, type: 'must');
     }
 
     /**
-     * 在提供的字段中包含确切术语的文档，等同于某个字段必须要等于
+     * must_not通配符*号匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-wildcard-query.html
+     * @param string $field
+     * @param string $value
+     * @return $this
+     */
+    public function whereNotWildcard(string $field, string $value): Builder
+    {
+        return $this->parseQuery($field, 'wildcard', $value, type: 'must_not');
+    }
+
+    /**
+     * should通配符*号匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-wildcard-query.html
+     * @param string $field
+     * @param string $value
+     * @return $this
+     */
+    public function whereShouldWildcard(string $field, string $value): Builder
+    {
+        return $this->parseQuery($field, 'wildcard', $value, type: 'should');
+    }
+
+    /**
+     * filter通配符*号匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-wildcard-query.html
+     * @param string $field
+     * @param string $value
+     * @return $this
+     */
+    public function whereFilterWildcard(string $field, string $value): Builder
+    {
+        return $this->parseQuery($field, 'wildcard', $value, type: 'filter');
+    }
+
+    /**
+     * must，等同于等于，在提供的字段中包含确切术语的文档
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-term-query.html
      * @param string $field 如果为text则需要以：field.raw 格式
      * @param mixed $value
@@ -930,11 +1121,11 @@ class Builder
      */
     public function whereTerm(string $field, mixed $value): Builder
     {
-        return $this->parseQuery($field, 'term', $value);
+        return $this->parseQuery($field, 'term', $value, type: 'must');
     }
 
     /**
-     * 在提供的字段中不包含确切术语的文档，等同于某个字段必须要等于
+     * must_not，等同于不等于，在提供的字段中不包含确切术语的文档，
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-term-query.html
      * @param string $field
      * @param mixed $value
@@ -942,23 +1133,35 @@ class Builder
      */
     public function whereNotTerm(string $field, mixed $value): Builder
     {
-        return $this->parseQuery($field, 'not_term', $value);
+        return $this->parseQuery($field, 'term', $value, type: 'must_not');
     }
 
     /**
-     * 必须匹配
-     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query.html
+     * should，等同于或等于，在提供的字段中应该包含确切术语的文档，
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-term-query.html
      * @param string $field
      * @param mixed $value
      * @return $this
      */
-    public function whereMatch(string $field, mixed $value): Builder
+    public function whereShouldTerm(string $field, mixed $value): Builder
     {
-        return $this->parseQuery($field, 'match', $value);
+        return $this->parseQuery($field, 'term', $value, type: 'should');
     }
 
     /**
-     * 多字段匹配查询
+     * filter，等同于过滤等于，在提供的字段中过滤包含确切术语的文档，
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-term-query.html
+     * @param string $field
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereFilterTerm(string $field, mixed $value): Builder
+    {
+        return $this->parseQuery($field, 'term', $value, type: 'filter');
+    }
+
+    /**
+     * must多字段匹配查询
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-multi-match-query.html
      * @param array $fields
      * @param mixed $value
@@ -966,23 +1169,59 @@ class Builder
      */
     public function whereMultiMatch(array $fields, mixed $value): Builder
     {
-        return $this->parseQuery($fields, 'multi_match', $value);
+        return $this->parseQuery($fields, 'multi_match', $value, type: 'must');
     }
 
     /**
-     * 应该匹配
+     * must_not多字段匹配查询
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-multi-match-query.html
+     * @param array $fields
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereNotMultiMatch(array $fields, mixed $value): Builder
+    {
+        return $this->parseQuery($fields, 'multi_match', $value, type: 'must_not');
+    }
+
+    /**
+     * should多字段匹配查询
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-multi-match-query.html
+     * @param array $fields
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereShouldMultiMatch(array $fields, mixed $value): Builder
+    {
+        return $this->parseQuery($fields, 'multi_match', $value, type: 'should');
+    }
+
+    /**
+     * filter多字段匹配查询
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-multi-match-query.html
+     * @param array $fields
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereFilterMultiMatch(array $fields, mixed $value): Builder
+    {
+        return $this->parseQuery($fields, 'multi_match', $value, type: 'filter');
+    }
+
+    /**
+     * must匹配
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query.html
      * @param string $field
      * @param mixed $value
      * @return $this
      */
-    public function whereShouldMatch(string $field, mixed $value): Builder
+    public function whereMatch(string $field, mixed $value): Builder
     {
-        return $this->parseQuery($field, 'should_match', $value);
+        return $this->parseQuery($field, 'match', $value, type: 'must');
     }
 
     /**
-     * 不能匹配
+     * must_not匹配
      * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query.html
      * @param string $field
      * @param mixed $value
@@ -990,7 +1229,31 @@ class Builder
      */
     public function whereNotMatch(string $field, mixed $value): Builder
     {
-        return $this->parseQuery($field, 'not_match', $value);
+        return $this->parseQuery($field, 'match', $value, type: 'must_not');
+    }
+
+    /**
+     * should匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query.html
+     * @param string $field
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereShouldMatch(string $field, mixed $value): Builder
+    {
+        return $this->parseQuery($field, 'match', $value, type: 'should');
+    }
+
+    /**
+     * filter匹配
+     * https://www.elastic.co/guide/en/elasticsearch/reference/8.5/query-dsl-match-query.html
+     * @param string $field
+     * @param mixed $value
+     * @return $this
+     */
+    public function whereFilterMatch(string $field, mixed $value): Builder
+    {
+        return $this->parseQuery($field, 'match', $value, type: 'filter');
     }
 
     /**
@@ -1022,77 +1285,57 @@ class Builder
      * @param string $operate
      * @param mixed $value
      * @param array $options
+     * @param string $type must must_not should filter
      * @return $this
      */
-    protected function parseQuery(string|array $field, string $operate, mixed $value, array $options = []): Builder
+    protected function parseQuery(string|array $field, string $operate, mixed $value, array $options = [], string $type = 'must'): Builder
     {
+        if (!in_array($operate, $this->operate, true)) {
+            throw new LogicException('where query condition operate [' . $operate . '] illegally, Supported only [' . implode(',', $this->operate) . ']');
+        }
+
+        $types = ['must', 'must_not', 'should', 'filter'];
+        if (!in_array($type, $types, true)) {
+            throw new LogicException('where query condition type [' . $type . '] illegally, Supported only [' . implode(',', $types) . ']');
+        }
+
         switch ($operate) {
-            //必须匹配，match用于执行全文查询（包括模糊匹配）的标准查询 以及短语或邻近查询。
+            //匹配，match用于执行全文查询（包括模糊匹配）的标准查询 以及短语或邻近查询。
             case 'match':
-                $type = 'must';
                 $result = ['match' => [$field => $value]];
                 break;
-            //应该匹配
-            case 'should_match':
-                $type = 'should';
-                $result = ['match' => [$field => $value]];
-                break;
-            //不匹配
-            case 'not_match':
-                $type = 'must_not';
-                $result = ['match' => [$field => $value]];
+            //短语匹配，与match查询类似，但用于匹配确切的短语或单词邻近匹配
+            case 'match_phrase':
+                $result = ['match_phrase' => [$field => array_merge(['query' => $value, 'slop' => 100], $options)]];
                 break;
             //多字段匹配
             case 'multi_match':
-                $type = 'must';
                 $result = ['multi_match' => ['query' => $value, 'fields' => $field]];
                 break;
-            //必须等于 返回在提供的字段中包含确切术语的文档。您可以使用查询根据精确值查找文档，例如 价格、产品 ID 或用户名。
+            //等于 返回在提供的字段中包含确切术语的文档。您可以使用查询根据精确值查找文档，例如 价格、产品 ID 或用户名。
             case '=':
             case 'term':
-                $type = 'must';
                 $result = ['term' => [$field => $value]];
                 break;
-            //必须不等于 返回在提供的字段中包含确切术语的文档。您可以使用查询根据精确值查找文档，例如 价格、产品 ID 或用户名。
-            case '<>':
+            //不等于 返回在提供的字段中包含确切术语的文档。您可以使用查询根据精确值查找文档，例如 价格、产品 ID 或用户名。
             case '!=':
-            case 'not_term':
                 $type = 'must_not';
                 $result = ['term' => [$field => $value]];
-                break;
-            //必须等于短语匹配，必须出现在匹配的文档中，与match查询类似，但用于匹配确切的短语或单词邻近匹配
-            case 'match_phrase':
-                $type = 'must';
-                $result = ['match_phrase' => [$field => array_merge(['query' => $value, 'slop' => 100], $options)]];
-                break;
-            //不等于匹配确切的短语或单词邻近匹配
-            case 'not_match_phrase':
-                $type = 'must_not';
-                $result = ['match_phrase' => [$field => array_merge(['query' => $value, 'slop' => 100], $options)]];
-                break;
-            //短语匹配应出现在匹配文档
-            case 'should_match_phrase':
-                $type = 'should';
-                $result = ['match_phrase' => [$field => array_merge(['query' => $value, 'slop' => 100], $options)]];
                 break;
             //大于
             case '>':
-                $type = 'must';
                 $result = ['range' => [$field => ['gt' => $value]]];
                 break;
             //小于
             case '<':
-                $type = 'must';
                 $result = ['range' => [$field => ['lt' => $value]]];
                 break;
             //大于等于
             case '>=':
-                $type = 'must';
                 $result = ['range' => [$field => ['gte' => $value]]];
                 break;
             //小于等于
             case '<=':
-                $type = 'must';
                 $result = ['range' => [$field => ['lte' => $value]]];
                 break;
             //范围
@@ -1100,30 +1343,14 @@ class Builder
                 if (!isset($value[0], $value[1])) {
                     throw new LogicException('The between query value should contain start and end.', 400);
                 }
-                $type = 'must';
-                $result = ['range' => [$field => ['gte' => $value[0], 'lte' => $value[1]]]];
-                break;
-            //不包含范围
-            case 'not_between':
-                if (!isset($value[0], $value[1])) {
-                    throw new LogicException('The not_between query value should contain start and end.', 400);
-                }
-                $type = 'must_not';
                 $result = ['range' => [$field => ['gte' => $value[0], 'lte' => $value[1]]]];
                 break;
             //类似whereIn
             case 'in':
-                $type = 'must';
-                $result = ['terms' => [$field => $value]];
-                break;
-            //类似whereNotIn
-            case 'not_in':
-                $type = 'must_not';
                 $result = ['terms' => [$field => $value]];
                 break;
             //正则匹配
-            case 'regex':
-                $type = 'must';
+            case 'regexp':
                 $result = ['regexp' => [$field => $value]];
                 break;
             //前缀匹配
@@ -1131,26 +1358,16 @@ class Builder
                 $type = 'must';
                 $result = ['prefix' => [$field => $value]];
                 break;
-            //不匹配的前缀
-            case 'not_prefix':
-                $type = 'must_not';
-                $result = ['prefix' => [$field => $value]];
-                break;
             //通配符
             case 'wildcard':
-                $type = 'must';
                 $result = ['wildcard' => [$field => $value]];
                 break;
+            //存在字段
             case 'exists':
-                $type = 'must';
-                $result = ['exists' => ['field' => $field]];
-                break;
-            case 'not_exists':
-                $type = 'must_not';
                 $result = ['exists' => ['field' => $field]];
                 break;
         }
-        if (isset($type, $result)) {
+        if (isset($result)) {
             $this->query['bool'][$type][] = $result;
         }
         return $this;
